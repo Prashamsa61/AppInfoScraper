@@ -1,6 +1,7 @@
 {
     "recommendations": [
         "ms-python.python",
-        "eamodio.gitlens"
+        "eamodio.gitlens",
+        "usernamehw.errorlens"
     ]
 }
