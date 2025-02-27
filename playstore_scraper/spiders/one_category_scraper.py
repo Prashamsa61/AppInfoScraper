@@ -3,15 +3,19 @@ import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from database import DatabaseManager
+from playstore_scraper.database import DatabaseManager
 
 
 class PlaystoreSpider(scrapy.Spider):
     name = "acategory"
     allowed_domains = ["play.google.com"]
-    categories = ["ART_AND_DESIGN?hl=en"]
+    categories = [
+        "ART_AND_DESIGN?hl=en",
+        "BUSINESS",
+        "COMICS",
+    ]
 
-    category_limits = 10
+    category_limits = 15
     start_urls = [
         f"https://play.google.com/store/apps/category/{category}"
         for category in categories
@@ -28,6 +32,8 @@ class PlaystoreSpider(scrapy.Spider):
 
         self.driver = webdriver.Chrome(options=chrome_options)
         self.db_manager = DatabaseManager()
+
+        self.db_manager.create_apps_table()
 
     def parse(self, response):
         """Extract app links from category page."""
@@ -46,7 +52,7 @@ class PlaystoreSpider(scrapy.Spider):
         """Use Selenium to click the button and extract data."""
         category = response.meta.get("category")
         self.driver.get(response.url)
-        time.sleep(2)  # Wait for the page to load
+        time.sleep(2)
 
         try:
             # Click the button to reveal hidden details
@@ -54,7 +60,7 @@ class PlaystoreSpider(scrapy.Spider):
                 By.XPATH, "//div[@class='VMq4uf']//button"
             )
             self.driver.execute_script("arguments[0].click();", button)
-            time.sleep(2)  # Wait for content to load
+            time.sleep(2)
         except:
             self.logger.info("Button not found or already clicked.")
 
@@ -85,7 +91,7 @@ class PlaystoreSpider(scrapy.Spider):
             self.logger.info("Error extracting some fields.")
             return
 
-        data = {
+        app_data = {
             "category": category,
             "title": title,
             "rating": rating,
@@ -97,9 +103,9 @@ class PlaystoreSpider(scrapy.Spider):
             "ads": ads,
         }
 
-        self.db_manager.insert_data(data)  # Store data in database & CSV
+        self.db_manager.insert_app_data(app_data)
 
-        yield data
+        yield app_data
 
     def closed(self, reason):
         """Close Selenium WebDriver and DatabaseManager."""
