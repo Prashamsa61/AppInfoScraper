@@ -2,6 +2,7 @@
     "recommendations": [
         "ms-python.python",
         "eamodio.gitlens",
-        "usernamehw.errorlens"
+        "usernamehw.errorlens",
+        "ms-python.black-formatter"
     ]
 }
