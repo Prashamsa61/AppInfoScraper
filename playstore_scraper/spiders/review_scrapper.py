@@ -50,8 +50,8 @@ class PlayStore(scrapy.Spider):
         # Extract app title
         try:
             title = self.driver.find_element(By.XPATH, "//h1/span").text.strip()
-        except Exception as e:
-            self.logger.info(f"Error extracting app title ")
+        except Exception:
+            self.logger.info("Error extracting app title ")
             return
 
         if not self.db_manager.app_exists_in_playstore(title):
@@ -73,8 +73,8 @@ class PlayStore(scrapy.Spider):
             )
             self.driver.execute_script("arguments[0].click();", see_all_reviews_button)
             time.sleep(3)
-        except:
-            self.logger.info(f"No 'See All Reviews' button found .")
+        except Exception:
+            self.logger.info("No 'See All Reviews' button found .")
 
         # Extract reviews
         reviews = []
