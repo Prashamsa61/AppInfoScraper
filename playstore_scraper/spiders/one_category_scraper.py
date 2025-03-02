@@ -1,78 +1,35 @@
 import scrapy
 import time
+import csv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from playstore_scraper.database import DatabaseManager
+from datetime import datetime
+from selenium.common.exceptions import NoSuchElementException
 
 
 class PlaystoreSpider(scrapy.Spider):
     name = "acategory"
     allowed_domains = ["play.google.com"]
-    categories = {
-        "ART_AND_DESIGN": "https://play.google.com/store/apps/category/ART_AND_DESIGN?hl=en",
-        "AUTO_AND_VEHICLES": "https://play.google.com/store/apps/category/AUTO_AND_VEHICLES?hl=en",
-        "BOOKS_AND_REFERENCE": "https://play.google.com/store/apps/category/BOOKS_AND_REFERENCE?hl=en",
-        "BUSINESS": "https://play.google.com/store/apps/category/BUSINESS",
-        "COMICS": "https://play.google.com/store/apps/category/COMICS",
-        "COMMUNICATION": "https://play.google.com/store/apps/category/COMMUNICATION",
-        "DATING": "https://play.google.com/store/apps/category/DATING",
-        "EDUCATION": "https://play.google.com/store/apps/category/EDUCATION",
-        "ENTERTAINMENT": "https://play.google.com/store/apps/category/ENTERTAINMENT",
-        "EVENTS": "https://play.google.com/store/apps/category/EVENTS",
-        "FINANCE": "https://play.google.com/store/apps/category/FINANCE",
-        "FOOD_AND_DRINK": "https://play.google.com/store/apps/category/FOOD_AND_DRINK?hl=en",
-        "HEALTH_AND_FITNESS": "https://play.google.com/store/apps/category/HEALTH_AND_FITNESS?hl=en",
-        "HOUSE_AND_HOME": "https://play.google.com/store/apps/category/HOUSE_AND_HOME?hl=en",
-        "LIBRARIES_AND_DEMO": "https://play.google.com/store/apps/category/LIBRARIES_AND_DEMO?hl=en",
-        "LIFESTYLE": "https://play.google.com/store/apps/category/LIFESTYLE",
-        "MAPS_AND_NAVIGATION": "https://play.google.com/store/apps/category/MAPS_AND_NAVIGATION?hl=en",
-        "MUSIC_AND_AUDIO": "https://play.google.com/store/apps/category/MUSIC_AND_AUDIO?hl=en",
-        "NEWS_AND_MAGAZINES": "https://play.google.com/store/apps/category/NEWS_AND_MAGAZINES?hl=en",
-        "PARENTING": "https://play.google.com/store/apps/category/PARENTING",
-        "PERSONALIZATION": "https://play.google.com/store/apps/category/PERSONALIZATION",
-        "PHOTOGRAPHY": "https://play.google.com/store/apps/category/PHOTOGRAPHY",
-        "PRODUCTIVITY": "https://play.google.com/store/apps/category/PRODUCTIVITY",
-        "SHOPPING": "https://play.google.com/store/apps/category/SHOPPING",
-        "SOCIAL": "https://play.google.com/store/apps/category/SOCIAL",
-        "SPORTS": "https://play.google.com/store/apps/category/SPORTS",
-        "TOOLS": "https://play.google.com/store/apps/category/TOOLS",
-        "TRAVEL_AND_LOCAL": "https://play.google.com/store/apps/category/TRAVEL_AND_LOCAL?hl=en",
-        "VIDEO_PLAYERS_AND_EDITORS": "https://play.google.com/store/apps/category/VIDEO_PLAYERS_AND_EDITORS?hl=en",
-        "WEATHER": "https://play.google.com/store/apps/category/WEATHER",
-        "ACTION": "https://play.google.com/store/apps/category/ACTION",
-        "ADVENTURE": "https://play.google.com/store/apps/category/ADVENTURE",
-        "ARCADE": "https://play.google.com/store/apps/category/ARCADE",
-        "BOARD": "https://play.google.com/store/apps/category/BOARD",
-        "CARD": "https://play.google.com/store/apps/category/CARD",
-        "CASINO": "https://play.google.com/store/apps/category/CASINO",
-        "CASUAL": "https://play.google.com/store/apps/category/CASUAL",
-        "EDUCATIONAL": "https://play.google.com/store/apps/category/EDUCATIONAL",
-        "MUSIC": "https://play.google.com/store/apps/category/MUSIC",
-        "PUZZLE": "https://play.google.com/store/apps/category/PUZZLE",
-        "RACING": "https://play.google.com/store/apps/category/RACING",
-        "ROLE_PLAYING": "https://play.google.com/store/apps/category/ROLE_PLAYING?hl=en",
-        "SIMULATION": "https://play.google.com/store/apps/category/SIMULATION",
-        "SPORTS_GAMES": "https://play.google.com/store/apps/category/SPORTS_GAMES?hl=en",
-        "STRATEGY": "https://play.google.com/store/apps/category/STRATEGY",
-        "TRIVIA": "https://play.google.com/store/apps/category/TRIVIA",
-        "WORD": "https://play.google.com/store/apps/category/WORD",
-    }
-
-    start_urls = list(categories.values())
-    category_limits = 1
-    category_counts = {category: 0 for category in categories}
+    categories = {}
 
     def __init__(self):
         """Initialize Selenium WebDriver and DatabaseManager."""
         chrome_options = Options()
-        chrome_options.add_argument("--headless")
+        # chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
 
         self.driver = webdriver.Chrome(options=chrome_options)
         self.db_manager = DatabaseManager()
         self.db_manager.create_apps_table()
+
+        # Load categories from the CSV file
+        csv_file_path = r"../output/categories.csv"
+        self.categories = self.load_categories_from_csv(csv_file_path)
+        self.category_limits = 2
+        self.category_counts = {category: 0 for category in self.categories}
 
     def start_requests(self):
         """Generate requests for each category."""
@@ -107,44 +64,81 @@ class PlaystoreSpider(scrapy.Spider):
             if button.is_displayed():
                 self.driver.execute_script("arguments[0].click();", button)
                 time.sleep(2)
-        except:
-            self.logger.info("Button not found or already clicked.")
+        except NoSuchElementException:
+            self.logger.info("No expandable 'Read More' section found for this app.")
 
         try:
             title = self.driver.find_element(By.XPATH, "//h1/span").text
+        except NoSuchElementException:
+            self.logger.warning("Title not found.")
+            title = None
+
+        try:
             rating = self.driver.find_element(
                 By.XPATH, "//div[@class='ClM7O']//div"
             ).text
+        except NoSuchElementException:
+            self.logger.warning("Rating not found.")
+            rating = None
+
+        try:
             version = self.driver.find_element(
-                By.XPATH, "//div[@class='reAt0'][1]"
+                By.XPATH,
+                "(//div[@class='reAt0'])[1] | //div[contains(@class, 'q078ud') and contains(text(), 'Version')]/following-sibling::div[@class='reAt0']",
             ).text
+        except NoSuchElementException:
+            self.logger.warning("Version not found.")
+            version = None
+
+        try:
             review_count = self.driver.find_element(
                 By.XPATH, "//div[contains(@class,'g1rdde')][1]"
             ).text
+        except NoSuchElementException:
+            self.logger.warning("Review count not found.")
+            review_count = None
+
+        try:
             downloads = self.driver.find_element(
                 By.XPATH, "//div[contains(@class,'wVqUob')][2]/div"
             ).text
+        except NoSuchElementException:
+            self.logger.warning("Downloads count not found.")
+            downloads = None
+
+        try:
             age_suitability = self.driver.find_element(
                 By.XPATH, "//span[@itemprop='contentRating']"
             ).text
+        except NoSuchElementException:
+            self.logger.warning("Age suitability not found.")
+            age_suitability = None
+
+        try:
             updated_on = self.driver.find_element(
                 By.XPATH, "//div[contains(@class, 'xg1aie')]"
             ).text
+        except NoSuchElementException:
+            self.logger.warning("Updated date not found.")
+            updated_on = None
+
+        try:
             ads = self.driver.find_element(
                 By.XPATH, "//span[contains(@class, 'UIuSk')]"
             ).text
-        except:
-            self.logger.info("Error extracting some fields.")
-            return
+        except NoSuchElementException:
+            self.logger.warning("Ads information not found.")
+            ads = None
+        updated_on = datetime.strptime(updated_on, "%b %d, %Y").strftime("%Y/%m/%d")
 
         app_data = {
             "category": category,
             "title": title,
-            "rating": rating,
+            "rating": rating.replace("star", ""),
             "version": version,
-            "review_count": review_count,
+            "review_count": review_count.replace("reviews", "").strip(),
             "downloads": downloads,
-            "age_suitability": age_suitability,
+            "age_suitability": age_suitability.replace("Rated for", "").strip(),
             "updated_on": updated_on,
             "ads": ads,
         }
@@ -152,9 +146,26 @@ class PlaystoreSpider(scrapy.Spider):
         self.db_manager.insert_app_data(app_data)
         yield app_data
 
+    def load_categories_from_csv(self, csv_file_path):
+        categories = {}
+        try:
+            with open(csv_file_path, mode="r", encoding="utf-8") as file:
+                reader = csv.reader(file)
+                next(reader)
+                for row in reader:
+                    category = row[0]
+                    url = row[1]
+                    categories[category] = url
+        except FileNotFoundError:
+            self.logger.error(f"CSV file not found at: {csv_file_path}")
+        except Exception as e:
+            self.logger.error(f"Error reading CSV file: {str(e)}")
+
+        if not categories:
+            self.logger.warning("No categories found in the CSV file.")
+        return categories
+
     def closed(self, reason):
         """Close Selenium WebDriver and DatabaseManager."""
         self.driver.quit()
         self.db_manager.close()
-
-
