@@ -1,6 +1,4 @@
 import scrapy
-import csv
-import os
 
 
 class PlaystoreSpider(scrapy.Spider):
