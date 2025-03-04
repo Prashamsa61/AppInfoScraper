@@ -1,6 +1,4 @@
 import sqlite3
-import csv
-import os
 
 
 class DatabaseManager:
@@ -35,8 +33,13 @@ class DatabaseManager:
                 downloads TEXT,
                 age_suitability TEXT,
                 updated_on TEXT,
-                ads TEXT
+                ads TEXT,
+                requires_android TEXT,
+                In_app_purchases TEXT,
+                price TEXT,
+                ranking_category TEXT
             )
+
             """
         )
         self.conn.commit()
@@ -62,8 +65,8 @@ class DatabaseManager:
         """Insert app data into SQLite"""
         self.cursor.execute(
             """
-            INSERT OR IGNORE INTO apps (category, title, rating, version, review_count, downloads, age_suitability, updated_on, ads)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO apps (category, title, rating, version, review_count, downloads, age_suitability, updated_on, ads,requires_android, In_app_purchases,price,ranking_category)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
             """,
             (
                 data["category"],
@@ -75,6 +78,10 @@ class DatabaseManager:
                 data["age_suitability"],
                 data["updated_on"],
                 data["ads"],
+                data["requires_android"],
+                data["In_app_purchases"],
+                data["price"],
+                data["ranking_category"],
             ),
         )
         self.conn.commit()
