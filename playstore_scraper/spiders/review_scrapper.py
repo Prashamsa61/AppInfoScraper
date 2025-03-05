@@ -94,7 +94,7 @@ class PlayStore(scrapy.Spider):
             By.XPATH, "//span[@class='bp9Aid']"
         )
         review_rating_elements = self.driver.find_elements(
-            By.XPATH, "//div[@class='iXRFPc']//span[@aria-hidden='true']"
+            By.XPATH, "//div[@class='Jx4nYe']//div[@class='iXRFPc']"
         )
 
         # Ensure review data is extracted properly
@@ -115,7 +115,7 @@ class PlayStore(scrapy.Spider):
                 else None
             )
             review_rating = (
-                review_rating_elements[i].text.strip()
+                review_rating_elements[i].get_attribute("aria-label").split()[1]
                 if i < len(review_rating_elements)
                 else None
             )
@@ -136,6 +136,7 @@ class PlayStore(scrapy.Spider):
             "category": category,
             "title": title,
             "reviews": reviews,
+            "rating": review_rating,
         }
 
         self.db_manager.insert_review_data(app_id, reviews)
