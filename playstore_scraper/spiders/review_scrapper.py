@@ -9,7 +9,7 @@ import os
 
 
 class PlayStore(scrapy.Spider):
-    name = "fullScrape"
+    name = "reviews_scraper"
     allowed_domains = ["play.google.com"]
 
     def __init__(self):
