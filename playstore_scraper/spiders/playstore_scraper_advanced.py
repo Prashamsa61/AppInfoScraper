@@ -46,7 +46,6 @@ class PlaystoreSpider(scrapy.Spider):
         # Read category data from CSV file
         self.categories = self.read_categories_from_csv("../output/categories.csv")
         self.category_counters = {}
-
         # Set up Selenium WebDriver
         chrome_options = Options()
         chrome_options.add_argument("--disable-gpu")
@@ -78,6 +77,7 @@ class PlaystoreSpider(scrapy.Spider):
 
     def parse_category_page(self, response):
         """Parse the category page and extract app URLs from different ranking categories."""
+
         category = response.meta["category"]
         self.driver.get(response.url)
 
@@ -113,11 +113,11 @@ class PlaystoreSpider(scrapy.Spider):
                             "category_url": response.url,
                         },
                     )
+
             except Exception as e:
                 self.logger.error(f"Could not click {ranking_category}: {e}")
 
     def parse_app_page(self, response):
-        """Extract details of an individual app."""
         category = response.meta["category"]
         ranking_category = response.meta["ranking_category"]
         category_url = response.meta["category_url"]
@@ -125,7 +125,7 @@ class PlaystoreSpider(scrapy.Spider):
         self.driver.get(response.url)
         time.sleep(2)
 
-        # Click arrow button before extracting details (if present)
+        # Click the arrow button before extracting details
         try:
             wait = WebDriverWait(self.driver, 5)
             buttons = wait.until(
@@ -160,12 +160,17 @@ class PlaystoreSpider(scrapy.Spider):
             key: self.driver.find_elements(By.XPATH, xpath)
             for key, xpath in xpaths.items()
         }
+
         raw_data = {
             key: extracted_data[key][0].text if extracted_data[key] else None
             for key in xpaths
         }
         raw_data.update(
-            {"category": category, "ranking_category": ranking_category, "price": price}
+            {
+                "category": category,
+                "ranking_category": ranking_category,
+                "price": price,
+            }
         )
 
         cleaned_data = self.preprocess_data(raw_data)
@@ -179,8 +184,49 @@ class PlaystoreSpider(scrapy.Spider):
             self.driver.get(category_url)
             time.sleep(3)
 
+    def preprocess_data(self, data):
+        def clean_numeric_value(value):
+            if not value or not isinstance(value, str):
+                return "Not Available"
+            try:
+                value = value.replace("+", "").strip()
+                if "K" in value:
+                    return int(float(value.replace("K", "")) * 1000)
+                elif "M" in value:
+                    return int(float(value.replace("M", "")) * 1000000)
+                return int(value)
+            except ValueError:
+                return "Not Available"
+
+        return {
+            "category": data["category"],
+            "title": data["title"],
+            "rating": data["rating"].replace("\nstar", "") if data["rating"] else None,
+            "version": data["version"] if data["version"] else "Not Available",
+            "review_count": clean_numeric_value(
+                re.sub(r"[^\dKM]", "", data["review_count"])
+            )
+            if data["review_count"]
+            else None,
+            "downloads": clean_numeric_value(data["downloads"]),
+            "age_suitability": re.sub(r"[^0-9+]", "", data["age_suitability"])
+            if data["age_suitability"]
+            else None,
+            "updated_on": data["updated_on"] if data["updated_on"] else "Not Available",
+            "ads": data["ads"] if data["ads"] else "No Ad",
+            "requires_android": data["Requires_android"]
+            if data["Requires_android"]
+            else "Not Available",
+            "In_app_purchases": data["In_app_purchases"]
+            if data["In_app_purchases"]
+            else "No in-app-purchases",
+            "price": data["price"] if data["price"] else "Free",
+            "ranking_category": data["ranking_category"],
+        }
+
     def extract_price(self):
         """Extract price of the app."""
+
         try:
             install_button = self.driver.find_element(
                 By.XPATH, "//button[contains(@aria-label, 'Install')]"
@@ -204,3 +250,4 @@ class PlaystoreSpider(scrapy.Spider):
         self.driver.quit()
         if hasattr(self.db_manager, "close"):
             self.db_manager.close()
+
