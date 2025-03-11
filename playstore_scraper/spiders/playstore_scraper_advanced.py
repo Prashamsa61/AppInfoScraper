@@ -76,12 +76,10 @@ class PlaystoreSpider(scrapy.Spider):
         return categories
 
     def parse_category_page(self, response):
-        """Parse the category page and extract app URLs from different ranking categories."""
-
         category = response.meta["category"]
+
         self.driver.get(response.url)
 
-        # Define category button IDs for rankings
         category_buttons = {
             "Top Free": "ct|apps_topselling_free",
             "Top Grossing": "ct|apps_topgrossing",
@@ -90,19 +88,16 @@ class PlaystoreSpider(scrapy.Spider):
 
         for ranking_category, button_id in category_buttons.items():
             try:
-                # Click category button to load apps
                 button = self.driver.find_element(By.ID, button_id)
                 self.driver.execute_script("arguments[0].click();", button)
                 time.sleep(3)
 
-                # Extract app URLs
                 app_elements = self.driver.find_elements(
                     By.XPATH,
                     "//section[contains(@jscontroller,'IgeFAf')]//div[contains(@class,'ULeU3b neq64b')]//a",
                 )
 
-                # Extract data for first 2 apps
-                for i, app_element in enumerate(app_elements[:2]):
+                for i, app_element in enumerate(app_elements):
                     app_link = app_element.get_attribute("href")
                     yield scrapy.Request(
                         url=app_link,
@@ -113,9 +108,26 @@ class PlaystoreSpider(scrapy.Spider):
                             "category_url": response.url,
                         },
                     )
-
             except Exception as e:
                 self.logger.error(f"Could not click {ranking_category}: {e}")
+
+        # Extract additional apps that are not inside ranking category buttons
+        additional_apps = self.driver.find_elements(
+            By.XPATH,
+            "//div[contains(@jscontroller,'jZ2Ncd')]//div[contains(@class,'ULeU3b neq64b')]//a",
+        )
+
+        for app_element in additional_apps:
+            app_link = app_element.get_attribute("href")
+            yield scrapy.Request(
+                url=app_link,
+                callback=self.parse_app_page,
+                meta={
+                    "category": category,
+                    "ranking_category": "No Rank",
+                    "category_url": response.url,
+                },
+            )
 
     def parse_app_page(self, response):
         category = response.meta["category"]
@@ -123,11 +135,11 @@ class PlaystoreSpider(scrapy.Spider):
         category_url = response.meta["category_url"]
 
         self.driver.get(response.url)
-        time.sleep(2)
+        time.sleep(3)
 
         # Click the arrow button before extracting details
         try:
-            wait = WebDriverWait(self.driver, 5)
+            wait = WebDriverWait(self.driver, 10)
             buttons = wait.until(
                 EC.presence_of_all_elements_located(
                     (By.XPATH, "//div[@class='VMq4uf']//button")
@@ -182,7 +194,7 @@ class PlaystoreSpider(scrapy.Spider):
         finally:
             # Return to category page
             self.driver.get(category_url)
-            time.sleep(3)
+            time.sleep(5)
 
     def preprocess_data(self, data):
         def clean_numeric_value(value):
@@ -236,18 +248,25 @@ class PlaystoreSpider(scrapy.Spider):
         except Exception:
             try:
                 price_element = self.driver.find_element(
-                    By.XPATH, "(//div[contains(@class,'u4ICaf')]//button)[1]"
+                    By.XPATH, "//div[contains(@class,'u4ICaf')]//button"
                 )
-                price_text = price_element.get_attribute("aria-label")
-                if "$" in price_text:
-                    return re.sub(r"\s*Buy\s*", "", price_text).strip()
+                price_text = price_element.get_attribute("aria-label").strip()
+
+                # # Remove "Buy" if it's at the start or end
+                # price_text = re.sub(r"^(Buy\s*|\s*Buy)$", "", price_text).strip()
+
+                return price_text
             except Exception:
                 return "Not Available"
+
         return "Not Available"
 
     def closed(self, reason):
         """Close the Selenium WebDriver and database connection when the spider finishes."""
-        self.driver.quit()
+        self.logger.info(f"Spider closed due to: {reason}")
+
+        if hasattr(self, "driver") and self.driver:
+            self.driver.quit()
+
         if hasattr(self.db_manager, "close"):
             self.db_manager.close()
-
