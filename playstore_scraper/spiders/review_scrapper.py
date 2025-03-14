@@ -4,37 +4,45 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from playstore_scraper.database import DatabaseManager
+import csv
+import os
 
 
 class PlayStore(scrapy.Spider):
-    name = "fullScrape"
+    name = "reviews_scraper"
     allowed_domains = ["play.google.com"]
-    category = ["ART_AND_DESIGN?hl=en"]
-    category_limit = 15
-    start_urls = [
-        f"https://play.google.com/store/apps/category/{cat}" for cat in category
-    ]
-    category_counts = {cat.split("?")[0]: 0 for cat in category}
 
     def __init__(self):
-        """Initialize Selenium WebDriver and Database."""
+        """Initialize Selenium WebDriver, Database, and CSV."""
+        # Set up Selenium WebDriver
         chrome_options = Options()
-        chrome_options.add_argument("--headless")
+        # chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        self.driver = webdriver.Chrome(options=chrome_options)
 
+        # Database file
         self.db_manager = DatabaseManager()
         self.db_manager.create_reviews_table()
 
-        self.driver = webdriver.Chrome(options=chrome_options)
+        # Read categories from CSV
+        self.categories = self.read_categories_from_csv("../output/categories.csv")
+
+        # Extract category URLs and names
+        self.start_urls = [cat["URL"] for cat in self.categories]
+        self.category_url_map = {cat["URL"]: cat["Category"] for cat in self.categories}
+
+        # Initialize category count tracking
+        self.category_limit = 15
+        self.category_counts = {cat["Category"]: 0 for cat in self.categories}
 
     def parse(self, response):
         """Extract app links from category page."""
-        category = response.url.split("/")[-1].split("?")[0]
+        category = self.category_url_map.get(response.url, "Unknown")
         app_links = response.xpath("//div[contains(@class,'zuJxTd')]//a/@href").getall()
 
         for link in app_links:
-            if self.category_counts[category] < self.category_limit:
+            if self.category_counts.get(category, 0) < self.category_limit:
                 full_url = response.urljoin(link)
                 self.category_counts[category] += 1
                 yield scrapy.Request(
@@ -62,7 +70,7 @@ class PlayStore(scrapy.Spider):
 
         app_id = self.db_manager.get_app_id(title)
         if app_id is None:
-            self.logger(f"App'{title}' not found in database")
+            self.logger(f"App '{title}' not found in database")
             return
 
         # Click the "See All Reviews" button if available
@@ -74,7 +82,7 @@ class PlayStore(scrapy.Spider):
             self.driver.execute_script("arguments[0].click();", see_all_reviews_button)
             time.sleep(3)
         except Exception:
-            self.logger.info("No 'See All Reviews' button found .")
+            self.logger.info("No 'See All Reviews' button found.")
 
         # Extract reviews
         reviews = []
@@ -86,7 +94,7 @@ class PlayStore(scrapy.Spider):
             By.XPATH, "//span[@class='bp9Aid']"
         )
         review_rating_elements = self.driver.find_elements(
-            By.XPATH, "//div[@class='iXRFPc']//span[@aria-hidden='true']"
+            By.XPATH, "//div[@class='Jx4nYe']//div[@class='iXRFPc']"
         )
 
         # Ensure review data is extracted properly
@@ -107,7 +115,7 @@ class PlayStore(scrapy.Spider):
                 else None
             )
             review_rating = (
-                review_rating_elements[i].text.strip()
+                review_rating_elements[i].get_attribute("aria-label").split()[1]
                 if i < len(review_rating_elements)
                 else None
             )
@@ -123,16 +131,44 @@ class PlayStore(scrapy.Spider):
                     }
                 )
 
-        # Insert reviews data into the database
-        if reviews:
-            self.db_manager.insert_review_data(app_id, reviews)
-
         yield {
             "app_id": app_id,
             "category": category,
             "title": title,
             "reviews": reviews,
+            "rating": review_rating,
         }
+
+        self.db_manager.insert_review_data(app_id, reviews)
+
+    def read_categories_from_csv(self, file_path):
+        """Read categories.csv and return category names with URLs."""
+        file_path = os.path.abspath(file_path)
+        categories = []
+
+        try:
+            with open(file_path, newline="", encoding="utf-8") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    if (
+                        "Category" in row
+                        and "URL" in row
+                        and row["Category"].strip()
+                        and row["URL"].strip()
+                    ):
+                        categories.append(
+                            {
+                                "Category": row["Category"].strip(),
+                                "URL": row["URL"].strip(),
+                            }
+                        )
+        except OSError as e:
+            self.logger.error(f"OS error reading CSV file: {e}. Retrying...")
+            return self.read_categories_from_csv(file_path)
+        except Exception as e:
+            self.logger.error(f"Unexpected error reading CSV file: {e}")
+
+        return categories
 
     def closed(self, reason):
         """Close Selenium WebDriver."""

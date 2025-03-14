@@ -1,247 +1,302 @@
+"""
+Google Play Store Scraper
+
+This Scrapy spider uses Selenium to scrape app details from the Google Play Store.
+It extracts data such as:
+- App title
+- Rating
+- Version
+- Number of reviews
+- Downloads
+- Required Android version
+- Age suitability
+- Last update date
+- Presence of ads
+- In-app purchases
+- Price
+- Ranking category
+- Category
+
+How it works:
+1. Reads category names and URLs from a CSV file.
+2. Visits each category page and navigates through different ranking sections
+   (Top Free, Top Grossing, Top Paid).
+3. Clicks on app links to visit individual app pages and extract details.
+4. Saves extracted data into an SQLite database using the DatabaseManager.
+
+"""
+
 import scrapy
+import os
 import csv
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
 import time
 import re
-
+import logging
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 from playstore_scraper.database import DatabaseManager
+from selenium.common.exceptions import StaleElementReferenceException
 
 
 class PlaystoreSpider(scrapy.Spider):
-    name = "scraper"
-    category_limit = 5
+    name = "scrapers"
+    allowed_domains = ["play.google.com"]
 
     def __init__(self):
-        # Read URLs from CSV file
+        # Read category data from CSV file
         self.categories = self.read_categories_from_csv("../output/categories.csv")
         self.category_counters = {}
-
         # Set up Selenium WebDriver
         chrome_options = Options()
-        # chrome_options.add_argument("--headless")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--no-sandbox")
         self.driver = webdriver.Chrome(options=chrome_options)
 
-        # Import DataBase file
+        # Initialize database manager and create table if not exists
         self.db_manager = DatabaseManager()
         self.db_manager.create_apps_table()
 
     def start_requests(self):
-        """Iterate over categories and yield requests with category metadata"""
+        # Start scraping each category URL
         for item in self.categories:
-            self.category_counters[item["category"]] = 0  # Initialize counter
+            self.category_counters[item["category"]] = 0
             yield scrapy.Request(
                 url=item["url"],
                 callback=self.parse_category_page,
                 meta={"category": item["category"]},
             )
 
-    def click_arrow_button(self):
-        """Clicks the arrow button to extract all app info if available"""
-        try:
-            wait = WebDriverWait(self.driver, 5)
-            buttons = wait.until(
-                EC.presence_of_all_elements_located(
-                    (By.XPATH, "//div[@class='VMq4uf']//button")
-                )
-            )
-
-            if buttons:
-                buttons[0].click()
-                print("Clicked the first button successfully.")
-            else:
-                print("No buttons found.")
-        except Exception:
-            print("No 'Arrow' button found or already clicked")
-
     def read_categories_from_csv(self, file_path):
-        """Read the categories.csv file and get category names and URLs"""
+        """Read categories and their URLs from a CSV file with error handling."""
         categories = []
-        with open(file_path, newline="", encoding="utf-8") as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                categories.append({"category": row["Category"], "url": row["URL"]})
+
+        # Check if file exists
+        if not os.path.exists(file_path):
+            print(f"Error: File '{file_path}' not found.")
+            return categories
+
+        try:
+            with open(file_path, newline="", encoding="utf-8") as csvfile:
+                reader = csv.DictReader(csvfile)
+
+                # Check if the CSV has the required columns
+                if (
+                    reader.fieldnames is None
+                    or "Category" not in reader.fieldnames
+                    or "URL" not in reader.fieldnames
+                ):
+                    print("Error: CSV file is missing 'Category' or 'URL' columns.")
+                    return categories
+                for row in reader:
+                    # Ensure row data is valid
+                    if not row.get("Category") or not row.get("URL"):
+                        print(f"Warning: Skipping row with missing data: {row}")
+                        continue
+
+                    categories.append(
+                        {"category": row["Category"].strip(), "url": row["URL"].strip()}
+                    )
+
+            # Check if any categories were read
+            if not categories:
+                print("Warning: CSV file is empty or contains only invalid rows.")
+
+        except Exception as e:
+            print(f"Error reading CSV file: {e}")
+
         return categories
 
-    def click_category_button(self, button_id):
-        """Clicks the category tab (Top Free, Top Grossing, Top Paid)"""
-        try:
-            wait = WebDriverWait(self.driver, 15)
-            button = wait.until(EC.element_to_be_clickable((By.ID, button_id)))
-            button.click()
-            time.sleep(3)
-            return True
-        except Exception as e:
-            print(f"Button {button_id} not found or already selected. Error: {e}")
-            return False
-
     def parse_category_page(self, response):
-        """Extracts the app links from the category page and visits them."""
         category = response.meta["category"]
+        print(f"Attempting to load URL: {response.url}")
+
         self.driver.get(response.url)
 
-        ranking_categories = {
+        category_buttons = {
             "Top Free": "ct|apps_topselling_free",
             "Top Grossing": "ct|apps_topgrossing",
             "Top Paid": "ct|apps_topselling_paid",
         }
 
-        all_apps = {}
+        found_ranking_apps = False  # Flag to check if we found ranking category apps
 
-        for rank_name, rank_id in ranking_categories.items():
-            if self.click_category_button(rank_id):
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located(
-                        (By.XPATH, "//div[contains(@class,'ULeU3b neq64b')]//a")
-                    )
-                )  # Wait for app elements to load
+        for ranking_category, button_id in category_buttons.items():
+            try:
+                attempts = 3
+                for _ in range(attempts):
+                    try:
+                        button = self.driver.find_element(By.ID, button_id)
+                        self.driver.execute_script(
+                            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                            button,
+                        )
+                        self.driver.execute_script("arguments[0].click();", button)
+                        time.sleep(6)
+                        break
+                    except StaleElementReferenceException:
+                        print("Element became stale, retrying...")
+                        time.sleep(2)
+            except Exception as e:
+                self.logger.error(f"Could not click {ranking_category}: {e}")
+                continue  # Move to the next category if this one fails
 
-            # Find all app links and price
-            app_links = self.driver.find_elements(
-                By.XPATH, "//div[contains(@class,'ULeU3b neq64b')]//a"
+            # Extract apps from the ranking category
+            app_elements = self.driver.find_elements(
+                By.XPATH,
+                "//section[contains(@jscontroller,'IgeFAf')]//div[contains(@jscontroller,'tKHFxf')]/a",
             )
-            # app_prices = self.driver.find_elements(
-            #     By.XPATH, "//span [contains(@class,'sT93pb w2kbF ePXqnb')]/text()"
-            # )
-            app_prices = [
-                price.text
-                for price in self.driver.find_elements(
-                    By.XPATH, "//span[contains(@class,'sT93pb w2kbF ePXqnb')]"
-                )
-            ]
 
-            # app_titles = self.driver.find_elements(
-            #     By.XPATH, "//div[contains(@class,'ubGTjb')][1]"
-            # )
-            app_titles = [
-                title.text
-                for title in self.driver.find_elements(
-                    By.XPATH, "//div[contains(@class,'ubGTjb')][1]"
-                )
-            ]
+            if app_elements:  # If apps found, set flag to True
+                found_ranking_apps = True
 
-            # Extract href and price
-            app_data = []
-            for i, link in enumerate(app_links):
-                app_urls = link.get_attribute("href")
-                print(f"Extracted URL: {app_urls}")  # Debugging step
-
-                if not app_urls:  # Check if it's empty or None
-                    print("WARNING: Extracted app URL is empty or None!")
-
-                app_title = app_titles[i] if i < len(app_titles) else "Unknown"
-                app_price = app_prices[i] if i < len(app_prices) else "Free"
-
-                app_data.append(
-                    {"url": app_urls, "price": app_price, "title": app_title}
-                )
-
-                if app_urls in all_apps:
-                    print(f"Appending ranking category to {app_urls}")
-                    all_apps[app_urls]["ranking_category"].append(rank_name)
-                    print(f"Updated entry: {all_apps[app_urls]}")
-
-                else:
-                    all_apps[app_urls] = {
-                        "url": app_urls,
-                        "title": app_title,
-                        "price": app_price,
-                        "ranking_category": [rank_name],
-                    }
-
-            # Ensure exactly 5 apps are processed
-            for app in app_data[: self.category_limit]:
+            for app_element in app_elements:
+                app_link = app_element.get_attribute("href")
                 yield scrapy.Request(
-                    url=app["url"],
+                    url=app_link,
                     callback=self.parse_app_page,
                     meta={
                         "category": category,
+                        "ranking_category": ranking_category,
                         "category_url": response.url,
-                        "price": app["price"],
-                        "ranking_category": app.get("ranking_category", ["Unknown"]),
+                    },
+                )
+
+        # If no ranking category apps were found, then move to additional apps
+        if not found_ranking_apps:
+            additional_apps = self.driver.find_elements(
+                By.XPATH,
+                "//div[contains(@jscontroller,'jZ2Ncd')]//div[contains(@class,'ULeU3b neq64b')]//a",
+            )
+
+            for app_element in additional_apps:
+                app_link = app_element.get_attribute("href")
+                yield scrapy.Request(
+                    url=app_link,
+                    callback=self.parse_app_page,
+                    meta={
+                        "category": category,
+                        "ranking_category": "No Rank",
+                        "category_url": response.url,
                     },
                 )
 
     def parse_app_page(self, response):
-        """Extracts app details from the app page."""
         category = response.meta["category"]
-        category_url = response.meta["category_url"]
-        price = response.meta["price"]
         ranking_category = response.meta["ranking_category"]
+        category_url = response.meta["category_url"]
+
+        if not self.driver:  # Restart WebDriver if it's closed
+            chrome_options = Options()
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--no-sandbox")
+            self.driver = webdriver.Chrome(options=chrome_options)
+
+        print(f"Attempting to load URL: {response.url}")
 
         self.driver.get(response.url)
-        time.sleep(2)
+        time.sleep(6)
 
-        # Click Arrow button to load more app_info
-        self.click_arrow_button()
+        # Click the arrow button before extracting details
+        try:
+            wait = WebDriverWait(self.driver, 10)
+            buttons = wait.until(
+                EC.presence_of_all_elements_located(
+                    (By.XPATH, "//div[contains(@jscontroller,'lpwuxb')]//button")
+                )
+            )
+            print(f"Found {len(buttons)} buttons.")
 
-        # Define XPaths
+            if buttons:
+                print("Trying to click the first button using Selenium's .click()")
+                buttons[0].click()
+                time.sleep(3)
+            else:
+                print("Trying to scroll into view before clicking...")
+                self.driver.execute_script("arguments[0].scrollIntoView();", buttons[0])
+                buttons[0].click()
+
+        except Exception as e:
+            logging.warning(f"Arrow button click skipped or failed: {e}")
+
+        # Extract app price
+        price = self.extract_price()
+
+        # XPaths for extracting various app details
         xpaths = {
-            "title": "//h1/span",
-            "rating": "//div[@class='ClM7O']//div",
-            "version": "//div[contains(@class, 'q078ud') and contains(text(), 'Version')]/following-sibling::div[@class='reAt0']",
-            "review_count": "//div[contains(@class,'g1rdde')][1]",
-            "downloads": "//div[contains(@class,'wVqUob')][2]/div",
-            "Requires_android": "//div[contains(@class, 'q078ud') and contains(text(), 'Requires Android')]/following-sibling::div[@class='reAt0']",
+            # "title": "//h1/span",
+            "title": "//h1/span[contains(@itemprop,'name')]",
+            "rating": "//div[contains(@class,'TT9eCd') and contains(@aria-label, 'Rated')]",
+            "version": "//div[contains(text(), 'Version')]/following-sibling::div",
+            "review_count": "//div[contains(@class,'g1rdde') and contains(text(), 'reviews')]",
+            "downloads": "//div[contains(@class,'wVqUob')] [div[2][contains(text(),'Downloads')]] /div[1]",
+            "Requires_android": "//div[contains(text(), 'Requires Android')]/following-sibling::div",
             "age_suitability": "//span[@itemprop='contentRating']",
-            "updated_on": "//div[contains(@class, 'q078ud') and contains(text(), 'Updated on')]/following-sibling::div[@class='reAt0']",
+            "updated_on": "//div[contains(text(), 'Updated on')]/following-sibling::div",
             "ads": "//span[contains(@class, 'UIuSk')]",
             "In_app_purchases": "//div[@class='sMUprd'][div[1][contains(text(), 'In-app purchases')]]/div[2]",
         }
 
-        # Extract elements
         extracted_data = {
             key: self.driver.find_elements(By.XPATH, xpath)
             for key, xpath in xpaths.items()
         }
 
-        # Extract text values
         raw_data = {
             key: extracted_data[key][0].text if extracted_data[key] else None
             for key in xpaths
         }
+
         raw_data.update(
             {
                 "category": category,
-                # "app_url": response.url,
-                "price": price,
                 "ranking_category": ranking_category,
+                "price": price,
             }
         )
 
-        # Pre-process extracted data
         cleaned_data = self.preprocess_data(raw_data)
 
         try:
+            # Insert app data into database
             self.db_manager.insert_app_data(cleaned_data)
             yield cleaned_data
-
         finally:
+            # Return to category page
+            print(f"Attempting to load URL: {category_url}")
+
             self.driver.get(category_url)
-            time.sleep(3)
+            time.sleep(10)
+
+        return
 
     def preprocess_data(self, data):
-        """Cleans extracted data"""
-
         def clean_numeric_value(value):
-            """Convert K/M+ notation to integer values"""
-            if "K" in value:
-                return int(float(value.replace("K", "")) * 1000)
-            elif "M" in value:
-                return int(float(value.replace("M", "").replace("+", "")) * 1000000)
-            return value
+            if not value or not isinstance(value, str):
+                return "Not Available"
+            try:
+                value = value.replace("+", "").strip()
+                if "K" in value:
+                    return int(float(value.replace("K", "")) * 1000)
+                elif "M" in value:
+                    return int(float(value.replace("M", "")) * 1000000)
+                elif "L" in value:  # Handling 'L' for Lakh (1 Lakh = 100,000)
+                    return int(float(value.replace("L", "")) * 100000)
+                elif "Cr" in value:  # Handling 'Cr' for Crore (1 Crore = 10,000,000)
+                    return int(float(value.replace("Cr", "")) * 10000000)
+                return int(value)
+            except ValueError:
+                return "Not Available"
 
         return {
             "category": data["category"],
-            # "app_url": data["app_url"],
             "title": data["title"],
-            "rating": data["rating"].replace("\nstar", "") if data["rating"] else None,
-            "version": data["version"],
+            "rating": data["rating"].replace("\nstar", "")
+            if data["rating"]
+            else "No Rating",
+            "version": data["version"] if data["version"] else "Not Available",
             "review_count": clean_numeric_value(
                 re.sub(r"[^\dKM]", "", data["review_count"])
             )
@@ -253,14 +308,50 @@ class PlaystoreSpider(scrapy.Spider):
             else None,
             "updated_on": data["updated_on"] if data["updated_on"] else "Not Available",
             "ads": data["ads"] if data["ads"] else "No Ad",
-            "requires_android": data["Requires_android"],
+            "requires_android": data["Requires_android"]
+            if data["Requires_android"]
+            else "Not Available",
             "In_app_purchases": data["In_app_purchases"]
             if data["In_app_purchases"]
-            else "None",
+            else "No in-app-purchases",
             "price": data["price"] if data["price"] else "Free",
-            "ranking_category": ", ".join(data["ranking_category"]),
+            "ranking_category": data["ranking_category"],
         }
 
+    def extract_price(self):
+        """Extract price of the app."""
+
+        try:
+            install_button = self.driver.find_element(
+                By.XPATH, "//button[contains(@aria-label, 'Install')]"
+            )
+            if install_button:
+                return "Free"
+        except Exception:
+            try:
+                price_element = self.driver.find_element(
+                    By.XPATH, "//div[contains(@class,'u4ICaf')]//button"
+                )
+                price_text = price_element.get_attribute("aria-label").strip()
+
+                # Remove "Buy" if it's at the start or end
+                price_text = re.sub(r"^(Buy\s*|\s*Buy)$", "", price_text).strip()
+
+                return price_text
+            except Exception:
+                return "Not Available"
+
+        return "Not Available"
+
     def closed(self, reason):
-        self.driver.quit()
-        self.db_manager.close()
+        """Close the Selenium WebDriver and database connection when the spider finishes."""
+        self.logger.info(f"Spider closed due to: {reason}")
+
+        if hasattr(self, "driver") and self.driver:
+            if len(self.driver.window_handles) > 1:
+                self.driver.close()
+            else:
+                self.driver.quit()
+
+        if hasattr(self.db_manager, "close"):
+            self.db_manager.close()
