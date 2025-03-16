@@ -47,7 +47,7 @@ class PlaystoreSpider(scrapy.Spider):
 
     def __init__(self):
         # Read category data from CSV file
-        self.categories = self.read_categories_from_csv("../categories.csv")
+        self.categories = self.read_categories_from_csv("categories.csv")
         self.category_counters = {}
         # Set up Selenium WebDriver
         chrome_options = Options()
@@ -266,7 +266,10 @@ class PlaystoreSpider(scrapy.Spider):
         )
         rating_elements = self.driver.find_elements(
             By.XPATH,
-            "//div[contains(@class,'TT9eCd') and contains(@aria-label, 'Rated')] | //div[contains(@class,'jILTFe')]",
+            "//div[contains(@class,'TT9eCd') and contains(@aria-label, 'Rated')]",
+        )
+        rating_elements_2 = self.driver.find_elements(
+            By.XPATH, "//div[contains(@class,'jILTFe')]"
         )
 
         version_elements = self.driver.find_element(
@@ -304,21 +307,27 @@ class PlaystoreSpider(scrapy.Spider):
         # Collect raw data for all fields
         raw_data = {
             "title": title_elements[0].text if title_elements else "No title",
-            "rating": rating_elements[0].text if rating_elements else "Rating Missing",
-            "version": version_elements[0].text if version_elements else "No Version",
+            "rating": rating_elements[0].text
+            if rating_elements
+            else (rating_elements_2[0].text if rating_elements_2 else "Rating Missing"),
+            "version": version_elements.get_attribute("textContent").strip()
+            if version_elements
+            else "No Version",
             "review_count": review_count_elements[0].text
             if review_count_elements
             else "No review",
             "downloads": downloads_elements[0].text
             if downloads_elements
             else "No downloads",
-            "Requires_android": requires_android_elements[0].text
+            "requires_android": requires_android_elements.get_attribute(
+                "textContent"
+            ).strip()
             if requires_android_elements
             else "Not given",
             "age_suitability": age_suitability_elements[0].text
             if age_suitability_elements
             else "No age-suitability",
-            "updated_on": updated_on_elements.text
+            "updated_on": updated_on_elements.get_attribute("textContent").strip()
             if updated_on_elements
             else "Not given",
             "ads": ads_elements[0].text if ads_elements else "No ad",
@@ -331,8 +340,8 @@ class PlaystoreSpider(scrapy.Spider):
             "price": price,
         }
 
+        self.db_manager.insert_app_data(raw_data)
         yield raw_data
-        self.db_manager.insert_app_data()
 
     def extract_price(self):
         """Extract price of the app."""
