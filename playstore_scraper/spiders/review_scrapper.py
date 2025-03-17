@@ -15,7 +15,7 @@ class ScrapySeleniumSpider(scrapy.Spider):
 
     def __init__(self):
         chrome_options = Options()
-        # chrome_options.add_argument("--headless")  # Uncomment for headless mode
+        chrome_options.add_argument("--headless")
         self.driver = webdriver.Chrome(options=chrome_options)
         self.start_urls = self.load_urls_from_csv("../categories.csv")
 
@@ -84,7 +84,7 @@ class ScrapySeleniumSpider(scrapy.Spider):
             self.logger.info("Error extracting app title")
             return
 
-        # Check if the app exists in DB (assuming db_manager is defined elsewhere)
+        # Check if the app exists in DB
         if not self.db_manager.app_exists_in_playstore(title):
             self.logger.info(f"Skipping {title}, not found in database.")
             return
@@ -115,6 +115,7 @@ class ScrapySeleniumSpider(scrapy.Spider):
             self.logger.info("No 'See All Reviews' button found.")
 
         try:
+            # Scroll the reviews
             scroll = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located(
                     (By.XPATH, "//div[contains(@jsname,'rZHESd')]")
@@ -125,7 +126,7 @@ class ScrapySeleniumSpider(scrapy.Spider):
                     "window.scrollTo(0, document.body.scrollHeight);", scroll
                 )
             time.sleep(2)
-        except:
+        except Exception:
             self.logger.info("Scrolling part not found")
 
         # Click dropdown for sorting reviews
