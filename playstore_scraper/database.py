@@ -58,9 +58,11 @@ class DatabaseManager:
 
     def insert_app_data(self, data):
         """Insert app data into SQLite"""
+
         # Skip insertion if no title
         if not data.get("title"):
-            return  # Skip insertion if no title
+            return
+
         self.cursor.execute(
             """
             INSERT OR IGNORE INTO apps (category, title, rating, version, review_count, downloads, age_suitability, updated_on, ads,requires_android, In_app_purchases,price,ranking_category)
@@ -92,12 +94,12 @@ class DatabaseManager:
 
             # Execute the query to fetch all app IDs and titles
             cursor.execute("SELECT AppID, title FROM apps")
-            results = cursor.fetchall()  # Fetch all results
+            results = cursor.fetchall()
 
             # Store the results in a list of tuples (AppID, title)
             app_data = [{"AppID": row[0], "title": row[1]} for row in results]
 
-            return app_data  # Return the list of app data
+            return app_data
         except Exception as e:
             print(f"Error reading database: {e}")
             return []
