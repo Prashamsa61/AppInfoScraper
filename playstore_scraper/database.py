@@ -14,11 +14,6 @@ class DatabaseManager:
         self.create_apps_table()
         self.create_reviews_table()
 
-    def app_exists_in_playstore(self, title):
-        """Check if an app exists in playstore_data.db apps table."""
-        self.cursor.execute("SELECT 1 FROM apps WHERE title = ?", (title,))
-        return self.cursor.fetchone() is not None
-
     def create_apps_table(self):
         """Create the apps table in SQLite if not exists."""
         self.cursor.execute(
@@ -63,6 +58,9 @@ class DatabaseManager:
 
     def insert_app_data(self, data):
         """Insert app data into SQLite"""
+        # Skip insertion if no title
+        if not data.get("title"):
+            return  # Skip insertion if no title
         self.cursor.execute(
             """
             INSERT OR IGNORE INTO apps (category, title, rating, version, review_count, downloads, age_suitability, updated_on, ads,requires_android, In_app_purchases,price,ranking_category)
@@ -86,13 +84,26 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-        return self.get_app_id(data["title"])
+    def read_database(self):
+        """Reads the database and returns a list of all app IDs and titles."""
+        try:
+            conn = sqlite3.connect("../playstore_data.db")
+            cursor = conn.cursor()
 
-    def get_app_id(self, title):
-        # Retrieve the AppID after insertion for linking with reviews
-        self.cursor.execute("SELECT AppID FROM apps WHERE title = ?", (title,))
-        result = self.cursor.fetchone()
-        return result[0] if result else None
+            # Execute the query to fetch all app IDs and titles
+            cursor.execute("SELECT AppID, title FROM apps")
+            results = cursor.fetchall()  # Fetch all results
+
+            # Store the results in a list of tuples (AppID, title)
+            app_data = [{"AppID": row[0], "title": row[1]} for row in results]
+
+            return app_data  # Return the list of app data
+        except Exception as e:
+            print(f"Error reading database: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
 
     def insert_review_data(self, app_id, reviews):
         """Insert review data linked to an app."""
