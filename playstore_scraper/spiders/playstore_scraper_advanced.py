@@ -49,8 +49,9 @@ class PlaystoreSpider(scrapy.Spider):
         # Read category data from CSV file
         self.categories = self.read_categories_from_csv("categories.csv")
         self.category_counters = {}
-        # Set up Selenium WebDriver
+        # Set up Selenium WebDriv er
         chrome_options = Options()
+        chrome_options.add_argument("--headless")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--no-sandbox")
         self.driver = webdriver.Chrome(options=chrome_options)
@@ -307,9 +308,13 @@ class PlaystoreSpider(scrapy.Spider):
         # Collect raw data for all fields
         raw_data = {
             "title": title_elements[0].text if title_elements else "No title",
-            "rating": rating_elements[0].text
+            "rating": rating_elements[0].text.strip()
             if rating_elements
-            else (rating_elements_2[0].text if rating_elements_2 else "Rating Missing"),
+            else (
+                rating_elements_2[0].get_attribute("textContent").strip()
+                if rating_elements_2
+                else "Rating Missing"
+            ),
             "version": version_elements.get_attribute("textContent").strip()
             if version_elements
             else "No Version",
@@ -335,7 +340,7 @@ class PlaystoreSpider(scrapy.Spider):
             if in_app_purchases_elements
             else "Free",
             "category": category,
-            # "url": response.url,
+            "app_id": re.search(r"id=([^&]+)", response.url).group(1),
             "ranking_category": ranking_category,
             "price": price,
         }
