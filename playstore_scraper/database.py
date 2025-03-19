@@ -19,7 +19,7 @@ class DatabaseManager:
         self.cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS apps (
-                AppID INTEGER PRIMARY KEY AUTOINCREMENT,
+                ID INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT,
                 title TEXT,
                 rating TEXT,
@@ -32,7 +32,8 @@ class DatabaseManager:
                 requires_android TEXT,
                 In_app_purchases TEXT,
                 price TEXT,
-                ranking_category TEXT
+                ranking_category TEXT,
+                app_id TEXT
             )
 
             """
@@ -65,8 +66,8 @@ class DatabaseManager:
 
         self.cursor.execute(
             """
-            INSERT OR IGNORE INTO apps (category, title, rating, version, review_count, downloads, age_suitability, updated_on, ads,requires_android, In_app_purchases,price,ranking_category)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
+            INSERT OR IGNORE INTO apps (category, title, rating, version, review_count, downloads, age_suitability, updated_on, ads,requires_android, In_app_purchases,price,ranking_category,app_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?)
             """,
             (
                 data["category"],
@@ -82,24 +83,25 @@ class DatabaseManager:
                 data["In_app_purchases"],
                 data["price"],
                 data["ranking_category"],
+                data["app_id"],
             ),
         )
         self.conn.commit()
 
     def read_database(self):
-        """Reads the database and returns a list of all app IDs and titles."""
+        """Reads the database and returns a list of all app IDs."""
         try:
-            conn = sqlite3.connect("../playstore_data.db")
+            conn = sqlite3.connect("playstore_data.db")
             cursor = conn.cursor()
 
-            # Execute the query to fetch all app IDs and titles
-            cursor.execute("SELECT AppID, title FROM apps")
+            # Execute the query to fetch only app IDs
+            cursor.execute("SELECT app_id FROM apps")
             results = cursor.fetchall()
 
-            # Store the results in a list of tuples (AppID, title)
-            app_data = [{"AppID": row[0], "title": row[1]} for row in results]
+            # Extract and return only the app IDs as a list
+            app_ids = [row[0] for row in results]
 
-            return app_data
+            return app_ids
         except Exception as e:
             print(f"Error reading database: {e}")
             return []
@@ -109,6 +111,7 @@ class DatabaseManager:
 
     def insert_review_data(self, app_id, reviews):
         """Insert review data linked to an app."""
+
         # Loop through each review and insert it into the reviews table
         for review in reviews:
             reviewer_name = review["reviewer_name"]
@@ -119,10 +122,17 @@ class DatabaseManager:
             # Insert the review into the reviews table, linking with AppID
             self.cursor.execute(
                 """
-                INSERT INTO reviews (AppID, Reviewer_Name, Review, Review_Date, Rating)
+                INSERT OR IGNORE INTO reviews (AppID, Reviewer_Name, Review, Review_Date, Rating)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (app_id, reviewer_name, review_text, review_date, rating),
+            )
+            # Create a unique index to prevent duplicate reviews
+            self.cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS unique_review 
+                ON reviews (AppID, Reviewer_Name, Review_Date, Review,Rating)
+                """
             )
             self.conn.commit()
 
