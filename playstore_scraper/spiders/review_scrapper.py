@@ -1,6 +1,4 @@
-import logging
 import scrapy
-import csv
 import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -13,26 +11,35 @@ from playstore_scraper.database import DatabaseManager
 class ScrapySeleniumSpider(scrapy.Spider):
     name = "reviews_scraper"
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Set up Selenium WebDriver
         chrome_options = Options()
-        # chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--headless")  # Run in headless mode
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
         self.driver = webdriver.Chrome(options=chrome_options)
 
+        # Initialize database manager
         self.db_manager = DatabaseManager()
         self.db_manager.create_reviews_table()
-        self.app_links = set()
 
     def start_requests(self):
-        with open("categories.csv", mode="r", newline="", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                url = row["URL"]
-                yield scrapy.Request(url=url, callback=self.parse)
+        """Generates Scrapy requests for each app ID in the database."""
+        base_url = "https://play.google.com/store/apps/details?id="
+        app_ids = self.db_manager.read_database()
 
-    def scroll_reviews_section(self, min_reviews=100, max_attempts=3):
-        """Scroll until at least `min_reviews` are loaded or no more reviews appear."""
+        for app_id in app_ids:
+            url = base_url + app_id
+            yield scrapy.Request(
+                url=url, callback=self.parse_app_review, meta={"app_id": app_id}
+            )
+
+    def scroll_reviews_section(self, max_attempts=5, max_reviews=2000):
+        """Scroll until either `max_reviews` are loaded or no more reviews appear."""
         try:
-            scroll = WebDriverWait(self.driver, 10).until(
+            scroll_area = WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located(
                     (By.XPATH, "//div[contains(@jsname,'bN97Pc')]")
                 )
@@ -42,25 +49,26 @@ class ScrapySeleniumSpider(scrapy.Spider):
             attempts = 0
 
             while attempts < max_attempts:
-                current_reviews = self.driver.find_elements(
+                review_elements = self.driver.find_elements(
                     By.XPATH, "//div[@class='h3YV2d']"
                 )
-                review_count = len(current_reviews)
-                self.logger.info(f"Current reviews loaded: {review_count}")
+                review_count = len(review_elements)
+                self.logger.info(f"Loaded {review_count} reviews so far...")
 
-                if review_count >= min_reviews:
+                if review_count >= max_reviews:
                     self.logger.info(
-                        f"✅ Loaded {review_count} reviews. Stopping scroll."
+                        f"✅ Reached max reviews limit ({max_reviews}). Stopping scroll."
                     )
                     break
 
+                # Scroll to the bottom of the reviews section
                 self.driver.execute_script(
-                    "arguments[0].scrollTo(0, arguments[0].scrollHeight);", scroll
+                    "arguments[0].scrollTo(0, arguments[0].scrollHeight);", scroll_area
                 )
                 time.sleep(2)
 
                 if review_count == previous_review_count:
-                    attempts += 1
+                    attempts += 1  # No new reviews, count attempts
                     self.logger.info(
                         f"⚠️ No new reviews. Attempt {attempts}/{max_attempts}"
                     )
@@ -69,55 +77,22 @@ class ScrapySeleniumSpider(scrapy.Spider):
 
                 previous_review_count = review_count
 
-            self.logger.info("🚀 Stopping scrolling process.")
-
         except Exception as e:
             self.logger.error(f"❌ Error while scrolling reviews: {str(e)}")
 
-    def parse(self, response):
-        self.driver.get(response.url)
-        time.sleep(3)
-
-        app_elements = self.driver.find_elements(By.XPATH, "//div[@jsname='qJTHM']//a")
-        for app in app_elements:
-            self.app_links.add(app.get_attribute("href"))
-
-        for app_url in self.app_links:
-            yield scrapy.Request(
-                url=app_url, callback=self.parse_app_review, meta={"app_url": app_url}
-            )
-
     def parse_app_review(self, response):
-        app_url = response.meta["app_url"]
-        self.driver.get(app_url)
+        """Parses reviews for the given app page and stores them."""
+        app_id = response.meta["app_id"]
 
-        try:
-            title = (
-                WebDriverWait(self.driver, 10)
-                .until(EC.presence_of_element_located((By.XPATH, "//h1/span")))
-                .text.strip()
-            )
-        except Exception:
-            self.logger.info("Error extracting app title")
+        # Open URL in Selenium WebDriver
+        self.driver.get(response.url)
 
-        app_data = self.db_manager.read_database()
+        # Wait until the url is loaded
+        WebDriverWait(self.driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//div[@class='tU8Y5c']"))
+        )
 
-        # Initialize app id
-        app_id = None
-
-        # Check if extracted tile matches the title in app data
-        app = next((app for app in app_data if app["title"] == title), None)
-        if app:
-            app_id = app["AppID"]
-        else:
-            self.logger.info("App not found")
-
-        if app_id is None:
-            self.logger.info(
-                f"No matching title found in the database for: {title}. Skipping..."
-            )
-            return
-
+        # Click "See all reviews" button if available
         try:
             see_all_reviews_button = self.driver.find_element(
                 By.XPATH,
@@ -128,14 +103,21 @@ class ScrapySeleniumSpider(scrapy.Spider):
         except Exception:
             self.logger.info("No 'See All Reviews' button found.")
 
-        self.scroll_reviews_section(min_reviews=100)
+        self.scroll_reviews_section()
 
+        # Wait for reviews to load
         WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//div[@class='h3YV2d']"))
         )
 
+        # Extract reviews
         reviews = []
         review_elements = self.driver.find_elements(By.XPATH, "//div[@class='h3YV2d']")
+
+        # Limit to 2000 reviews
+        max_reviews = 2000
+        review_elements = review_elements[:max_reviews]
+
         reviewer_name_elements = self.driver.find_elements(
             By.XPATH, "//div[@class='X5PpBb']"
         )
@@ -147,9 +129,6 @@ class ScrapySeleniumSpider(scrapy.Spider):
         )
 
         for i in range(len(review_elements)):
-            if len(reviews) >= 100:
-                break
-
             review_text = (
                 review_elements[i].text.strip() if i < len(review_elements) else None
             )
@@ -179,14 +158,15 @@ class ScrapySeleniumSpider(scrapy.Spider):
                     }
                 )
 
+        # Yield extracted data
         yield {
             "app_id": app_id,
-            "title": title,
-            "app_url": app_url,
             "reviews": reviews,
         }
 
+        # Save to database
         self.db_manager.insert_review_data(app_id, reviews)
 
     def closed(self, reason):
+        """Cleanup Selenium WebDriver when spider is closed."""
         self.driver.quit()
